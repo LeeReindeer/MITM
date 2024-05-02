@@ -1,14 +1,9 @@
 package leer.moe.mitm;
 
-import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
-import io.netty.handler.logging.LogLevel;
-import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
@@ -28,33 +23,20 @@ public class HttpServer {
     }
 
     public void run() throws Exception {
-        ServerBootstrap b = new ServerBootstrap();
-        EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-        EventLoopGroup workerGroup = new NioEventLoopGroup();
-
         SelfSignedCertificate cert = new SelfSignedCertificate();
         SslContext sslContext = SslContextBuilder.forServer(cert.certificate(), cert.privateKey()).build();
 
-        b.group(bossGroup, workerGroup)
-                .channel(NioServerSocketChannel.class)
-                .handler(new LoggingHandler(LogLevel.INFO))
-                .childHandler(new ChannelInitializer<SocketChannel>() {
-                    @Override
-                    protected void initChannel(SocketChannel ch) throws Exception {
-                        ChannelPipeline p = ch.pipeline();
-//                        p.addLast(new HttpRequestDecoder());
-//                        p.addLast(new HttpResponseEncoder());
-//                        p.addLast(new CustomHttpServerHandler());
-                        SSLEngine engine = sslContext.newEngine(ch.alloc());
-                        p.addFirst("ssl", new SslHandler(engine));
-                        p.addLast(new HttpServerCodec());
-                        p.addLast(new HttpObjectAggregator(512 * 1024));
-                        p.addLast(new FullHttpRequestChannelInboundHandler());
-                    }
-                });
-
-        ChannelFuture f = b.bind(port).sync();
-        f.channel().closeFuture().sync();
+        NettyTemplate.newNioServer(port, new ChannelInitializer<SocketChannel>() {
+            @Override
+            protected void initChannel(SocketChannel ch) throws Exception {
+                ChannelPipeline p = ch.pipeline();
+                SSLEngine engine = sslContext.newEngine(ch.alloc());
+//                p.addFirst("ssl", new SslHandler(engine));
+                p.addLast(new HttpServerCodec());
+                p.addLast(new HttpObjectAggregator(512 * 1024));
+                p.addLast(new FullHttpRequestChannelInboundHandler());
+            }
+        });
     }
 
 

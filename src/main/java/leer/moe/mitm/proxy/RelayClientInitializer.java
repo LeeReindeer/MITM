@@ -8,9 +8,8 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.logging.LogLevel;
-import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
@@ -41,6 +40,10 @@ public class RelayClientInitializer extends ChannelInitializer<SocketChannel> {
         ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
             @Override
             public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+                if (!clientChannel.isOpen()) {
+                    ReferenceCountUtil.release(msg);
+                    return;
+                }
                 FullHttpResponse response = (FullHttpResponse) msg;
                 response.headers().add("test", "from proxy");
                 LOGGER.info("Tunnel Response: " + msg);

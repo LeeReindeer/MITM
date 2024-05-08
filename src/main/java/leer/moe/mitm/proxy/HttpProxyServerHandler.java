@@ -2,7 +2,6 @@ package leer.moe.mitm.proxy;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
-import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
@@ -16,7 +15,6 @@ import leer.moe.mitm.cert.CertUtil;
 import leer.moe.mitm.cert.HttpProxyCertConfig;
 
 import java.net.InetSocketAddress;
-import java.net.URI;
 
 /**
  * @author leereindeer
@@ -68,8 +66,7 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
                 LOGGER.info("SSL handshake request:" + ((ByteBuf) clientMsg).readableBytes() + " bytes");
                 int port = ((InetSocketAddress) ctx.channel().localAddress()).getPort();
                 // build fake server cert
-                SslContext sslCtx = SslContextBuilder
-                        .forServer(getServerCertConfig().serverPriKey(), CertUtil.getCert(port, originHost, getServerCertConfig())).build();
+                SslContext sslCtx = SslContextBuilder.forServer(certConfig.serverPriKey(), CertUtil.getCert(port, originHost, certConfig)).build();
                 // as fake https server
                 // sslHandler ->  httpServerCodec -> httpObjectAggregator -> httpProxyServerHandler
                 ctx.pipeline().addFirst("httpObjectAggregator", new HttpObjectAggregator(512 * 1024));
@@ -77,7 +74,6 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
                 ctx.pipeline().addFirst("sslHandle", sslCtx.newHandler(ctx.alloc()));
                 // 重新过一遍pipeline，拿到解密后的的http报文
                 ctx.pipeline().fireChannelRead(clientMsg);
-                return;
             }
         }
     }
@@ -88,10 +84,6 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
         cause.printStackTrace();
     }
 
-    private HttpProxyCertConfig getServerCertConfig() {
-        return certConfig;
-    }
-
     /**
      * @param ctx
      * @param clientMsg
@@ -100,10 +92,8 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
      */
     private void tunnelProxyRelay(ChannelHandlerContext ctx, Object clientMsg, Channel clientChannel, boolean isHttps) throws Exception {
         if (null == tunnelChannel) {
-            SslContext sslCtx = SslContextBuilder.forClient()
-                    .trustManager(InsecureTrustManagerFactory.INSTANCE).build();
-            tunnelChannel = NettyTemplate.newNioClient(originHost, originPort, ctx.channel().eventLoop(),
-                    new RelayClientInitializer(clientChannel, isHttps ? sslCtx : null));
+            SslContext sslCtx = SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build();
+            tunnelChannel = NettyTemplate.newNioClient(originHost, originPort, ctx.channel().eventLoop(), new RelayClientInitializer(clientChannel, isHttps ? sslCtx : null));
             tunnelChannel.addListener((ChannelFutureListener) future -> {
                 if (future.isSuccess()) {
                     LOGGER.info("Tunnel connected: " + originHost + ":" + originPort);
@@ -126,36 +116,7 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
     }
 
     /**
-     * HTTP: message-forwarding HTTP proxy
-     *
-     * @param ctx
-     * @param clientMsg
-     * @param clientChannel
-     * @throws Exception
-     */
-    private void forwardingProxyRelay(ChannelHandlerContext ctx, Object clientMsg, Channel clientChannel) throws Exception {
-        ChannelFuture forwardChannelFuture = NettyTemplate.newNioClient(originHost, originPort, ctx.channel().eventLoop(), new ChannelInitializer<SocketChannel>() {
-            @Override
-            protected void initChannel(SocketChannel ch) throws Exception {
-                ChannelPipeline p = ch.pipeline();
-                p.addLast(new HttpClientCodec());
-                p.addLast(new HttpObjectAggregator(512 * 1024));
-                p.addLast(new ProxyModifyHandlerAdapter(clientChannel));
-            }
-        });
-
-        forwardChannelFuture.addListener((ChannelFutureListener) future -> {
-            if (future.isSuccess()) {
-                LOGGER.info("Proxy request:" + clientMsg);
-                future.channel().writeAndFlush(clientMsg);
-            } else {
-                clientChannel.close();
-            }
-        }).addListener((ChannelFutureListener.CLOSE_ON_FAILURE));
-    }
-
-    /**
-     * HTTPS: blind forwarding proxy tunnel using CONNECT
+     * HTTPS usually use CONNECT tunnel proxy, but HTTP also can use it
      *
      * @param ctx
      * @param clientMsg
@@ -169,31 +130,12 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
     private void extractHostAndPort(FullHttpRequest httpRequest, String host) {
         String[] hostAndPortArr = host.split(":");
         originHost = hostAndPortArr[0];
-        if (hostAndPortArr.length > 1) {
+        if (hostAndPortArr.length == 2) {
             originPort = Integer.parseInt(hostAndPortArr[1]);
         } else {
-            if (httpRequest.uri().indexOf("https") == 0) {
-                originPort = 443;
-            } else {
-                originPort = 80;
-            }
+            originPort = 80;
+            LOGGER.error("invalid host: " + host + ", use default port: " + originPort);
         }
         LOGGER.info("target host: " + originHost + ": " + originPort);
-    }
-
-    private static class ProxyModifyHandlerAdapter extends ChannelInboundHandlerAdapter {
-        private final Channel clientChannel;
-
-        public ProxyModifyHandlerAdapter(Channel clientChannel) {
-            this.clientChannel = clientChannel;
-        }
-
-        @Override
-        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-            FullHttpResponse response = (FullHttpResponse) msg;
-            response.headers().add("test", "from proxy");
-            LOGGER.info("Proxy Response:" + msg);
-            clientChannel.writeAndFlush(msg);
-        }
     }
 }

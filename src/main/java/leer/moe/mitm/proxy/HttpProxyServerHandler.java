@@ -61,6 +61,8 @@ public class HttpProxyServerHandler extends ChannelInboundHandlerAdapter {
             }
         } else {
             ByteBuf clientMsgByteBuf = (ByteBuf) clientMsg;
+            // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-5
+            // TLS ContentType: 22 handshake
             if (clientMsgByteBuf.getByte(0) == 22) {
                 isHttps = true;
                 LOGGER.info("SSL handshake request:" + ((ByteBuf) clientMsg).readableBytes() + " bytes");
